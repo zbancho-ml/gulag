@@ -1,4 +1,4 @@
-""" cho: handle cho app.packets from the osu! client """
+""" cho: handle cho packets from the osu! client """
 import asyncio
 import ipaddress
 import re
@@ -19,7 +19,6 @@ import databases.core
 from cmyui.logging import Ansi
 from cmyui.logging import log
 from cmyui.logging import RGB
-from cmyui.osu.oppai_ng import OppaiWrapper
 from cmyui.utils import magnitude_fmt_time
 from fastapi import APIRouter
 from fastapi import Response
@@ -58,6 +57,7 @@ from app.objects.player import PresenceFilter
 from app.packets import BanchoPacketReader
 from app.packets import BasePacket
 from app.packets import ClientPackets
+from oppai_ng.oppai import OppaiWrapper
 
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
@@ -80,7 +80,7 @@ router = APIRouter(tags=["Bancho API"])
 @router.get("/")
 async def bancho_http_handler():
     """Handle a request from a web browser."""
-    app.packets = app.state.app.packets["all"]
+    packets = app.state.packets["all"]
 
     return HTMLResponse(
         b"<!DOCTYPE html>"
@@ -90,8 +90,8 @@ async def bancho_http_handler():
                 f"Players online: {len(app.state.sessions.players) - 1}",
                 '<a href="https://github.com/cmyui/gulag">Source code</a>',
                 "",
-                f"<b>app.packets handled ({len(app.packets)})</b>",
-                "<br>".join([f"{p.name} ({p.value})" for p in app.packets]),
+                f"<b>packets handled ({len(packets)})</b>",
+                "<br>".join([f"{p.name} ({p.value})" for p in packets]),
             ),
         ).encode(),
     )
@@ -162,24 +162,24 @@ async def bancho_handler(
 
     # restricted users may only use certain packet handlers.
     if not player.restricted:
-        packet_map = app.state.app.packets["all"]
+        packet_map = app.state.packets["all"]
     else:
-        packet_map = app.state.app.packets["restricted"]
+        packet_map = app.state.packets["restricted"]
 
-    # bancho connections can be comprised of multiple app.packets;
+    # bancho connections can be comprised of multiple packets;
     # our reader is designed to iterate through them individually,
     # allowing logic to be implemented around the actual handler.
-    # NOTE: any unhandled app.packets will be ignored internally.
+    # NOTE: any unhandled packets will be ignored internally.
 
-    app.packets_handled = []
+    packets_handled = []
     with memoryview(await request.body()) as body_view:
         for packet in BanchoPacketReader(body_view, packet_map):
             await packet.handle(player)
-            app.packets_handled.append(packet.__class__.__name__)
+            packets_handled.append(packet.__class__.__name__)
 
     if settings.DEBUG:
-        app.packets_str = ", ".join(app.packets_handled) or "None"
-        log(f"[BANCHO] {player} | {app.packets_str}.", RGB(0xFF68AB))
+        packets_str = ", ".join(packets_handled) or "None"
+        log(f"[BANCHO] {player} | {packets_str}.", RGB(0xFF68AB))
 
     player.last_recv_time = time.time()
 
@@ -193,7 +193,7 @@ def register(
     packet: ClientPackets,
     restricted: bool = False,
 ) -> Callable[[Type[BasePacket]], Type[BasePacket]]:
-    """Register a handler in `app.state.app.packets`."""
+    """Register a handler in `app.state.packets`."""
 
     def wrapper(cls: Type[BasePacket]) -> Type[BasePacket]:
         app.state.packets["all"][packet] = cls
@@ -708,7 +708,7 @@ async def login(
 
     # *real* client privileges are sent with this packet,
     # then the user's apparent privileges are sent in the
-    # userPresence app.packets to other players. we'll send
+    # userPresence packets to other players. we'll send
     # supporter along with the user's privileges here,
     # but not in userPresence (so that only donators
     # show up with the yellow name in-game, but everyone
@@ -1104,7 +1104,7 @@ class SendPrivateMessage(BasePacket):
                                 pp_values = []  # [(acc, pp), ...]
 
                                 if mode_vn == 0:
-                                    with OppaiWrapper("oppai-ng/liboppai.so") as ezpp:
+                                    with OppaiWrapper() as ezpp:
                                         if mods is not None:
                                             ezpp.set_mods(int(mods))
 
